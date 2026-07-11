@@ -1,0 +1,157 @@
+services:
+  events-kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: events-kafka
+    ports:
+      - "${KAFKA_HOST_PORT}:9092"
+    environment:
+      KAFKA_NODE_ID: ${KAFKA_NODE_ID}
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://events-kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_NODE_ID}@events-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS}
+      KAFKA_LOG_RETENTION_HOURS: ${KAFKA_LOG_RETENTION_HOURS}
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # One-shot: pre-creates the topics before the workers start. Without this the
+  # consumer subscribes to not-yet-existing topics (they are auto-created by the
+  # first produced message) and only notices them on a metadata refresh — up to
+  # 5 minutes of silently dropped consumption after a cold start.
+  events-kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: events-kafka-init
+    depends_on:
+      events-kafka:
+        condition: service_healthy
+    entrypoint: ["bash", "-c"]
+    command:
+      - for t in events.clicks events.views events.purchases; do
+        kafka-topics --bootstrap-server events-kafka:29092 --create --if-not-exists
+        --topic $$t --partitions ${KAFKA_NUM_PARTITIONS} --replication-factor 1 || exit 1;
+        done
+    restart: "no"
+
+  events-kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: events-kafka-ui
+    depends_on:
+      events-kafka:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_UI_HOST_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: events-kafka:29092
+
+  events-clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: events-clickhouse
+    ports:
+      - "${CLICKHOUSE_HTTP_HOST_PORT}:8123"
+      - "${CLICKHOUSE_NATIVE_HOST_PORT}:9000"
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  events-tabix:
+    image: spoonest/clickhouse-tabix-web-client:stable
+    container_name: events-tabix
+    depends_on:
+      events-clickhouse:
+        condition: service_healthy
+    ports:
+      - "${TABIX_HOST_PORT}:80"
+    environment:
+      CH_HOST: http://localhost:${CLICKHOUSE_HTTP_HOST_PORT}
+
+  events-ingestion-api:
+    build:
+      context: .
+      dockerfile: ingestion-api/Dockerfile
+    container_name: events-ingestion-api
+    depends_on:
+      events-kafka:
+        condition: service_healthy
+    ports:
+      - "${INGESTION_API_HOST_PORT}:8080"
+    environment:
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      RUST_LOG: ${RUST_LOG}
+      HOST: 0.0.0.0
+      PORT: 8080
+    # SIGTERM -> graceful: HTTP drain (shutdown_timeout 30s) + Kafka flush (10s).
+    # Docker compose's default 10s would kill the process before the drain completes.
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  events-workers:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile
+    container_name: events-workers
+    depends_on:
+      events-kafka:
+        condition: service_healthy
+      events-kafka-init:
+        condition: service_completed_successfully
+      events-clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      RUST_LOG: ${RUST_LOG}
+    # SIGTERM -> graceful: the worker must flush its accumulated batches and
+    # commit the offset. Docker compose's default 10s may not be enough.
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  events-analytics-api:
+    build:
+      context: .
+      dockerfile: analytics-api/Dockerfile
+    container_name: events-analytics-api
+    depends_on:
+      events-clickhouse:
+        condition: service_healthy
+    ports:
+      - "${ANALYTICS_API_HOST_PORT}:${ANALYTICS_API_CONTAINER_PORT}"
+    environment:
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      RUST_LOG: ${RUST_LOG}
+      HOST: 0.0.0.0
+      PORT: ${ANALYTICS_API_CONTAINER_PORT}
+    restart: unless-stopped
+
+volumes:
+  clickhouse-data:
+
+networks:
+  default:
+    name: events-net

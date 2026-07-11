@@ -1,0 +1,19 @@
+# Rust build artifacts (3.5G+). Never needed inside the image — cargo rebuilds
+# from source in the builder stage. Also keeps the build context tiny.
+target/
+**/target/
+
+# Dev-only load tester: it is standalone and never built into any image.
+load-generator/
+
+# VCS, local config and docs — irrelevant to the build.
+.git/
+.gitignore
+.env
+.env.example
+*.md
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
