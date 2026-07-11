@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rdkafka is compiled from source (C/C++ toolchain + cmake), the
+      # clickhouse crate's lz4 feature needs a C compiler — same set as the
+      # builder stage in the Dockerfiles.
+      - name: Install native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libssl-dev libsasl2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # two independent build trees: the workspace and the standalone load-generator
+          workspaces: |
+            . -> target
+            load-generator -> load-generator/target
+
+      - name: Format (workspace)
+        run: cargo fmt --check
+
+      - name: Format (load-generator)
+        run: cargo fmt --check
+        working-directory: load-generator
+
+      - name: Clippy (workspace)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Clippy (load-generator)
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: load-generator
+
+      # e2e tests in load-generator/tests are #[ignore]d — they need the
+      # docker compose stack and run locally only. Unit tests run everywhere.
+      - name: Test (workspace)
+        run: cargo test --workspace
+
+      - name: Test (load-generator)
+        run: cargo test
+        working-directory: load-generator
