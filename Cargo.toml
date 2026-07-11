@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "events-contract",
+    "ingestion-api",
+    "workers",
+    "analytics-api",
+]
+# load-generator is a dev-only load-testing tool. It is deliberately kept OUT of the
+# workspace so its heavy HTTP/TLS deps (reqwest) never enter the production crates'
+# dependency graph or the shared Cargo.lock. It builds standalone: `cd load-generator`.
+exclude = [
+    "load-generator",
+]
+
+# Single source of truth for versions/features; members inherit via `{ workspace = true }`.
+[workspace.dependencies]
+events-contract = { path = "events-contract" }
+actix-web = "4.14.0"
+chrono = { version = "0.4.45", features = ["serde"] }
+clickhouse = { version = "0.15.1", features = ["uuid", "chrono", "lz4"] }
+derive_more = { version = "2.1.1", features = ["display", "error"], default-features = false }
+moka = { version = "0.12.15", features = ["future"] }
+rdkafka = "0.39.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.23.4", features = ["serde", "v4"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

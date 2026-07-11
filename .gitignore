@@ -1,0 +1,8 @@
+# build artifacts (workspace root and the standalone load-generator)
+target/
+
+# local configuration with credentials; .env.example is the tracked template
+.env
+
+# OS / editor noise
+.DS_Store
