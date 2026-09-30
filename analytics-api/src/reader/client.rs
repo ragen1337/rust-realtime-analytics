@@ -33,7 +33,7 @@ impl ChReader {
             .with_database(database)
             .with_user(user)
             .with_password(password)
-            // Spec: 30s timeout for ClickHouse queries. The server aborts the query itself;
+            // 30s budget for ClickHouse queries. The server aborts the query itself;
             // the error arrives as clickhouse::Error -> From -> 503.
             .with_setting("max_execution_time", "30");
 
