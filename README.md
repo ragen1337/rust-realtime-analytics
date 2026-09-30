@@ -7,8 +7,8 @@
 An online shop sends events: someone clicked a product, looked at it, bought it. This project takes those events over HTTP, pushes them through Kafka into ClickHouse, and serves analytics on top: top products, a user's activity, conversion, revenue, and live counters.
 
 - **5,000 events/s with p99 under 10 ms**, on a single laptop
-- **No lost events.** Kafka offsets are committed only after the ClickHouse insert, and duplicates are collapsed on the ClickHouse side.
-- **Zero consumer lag** after a 1.5-million-event stress run, so the write path keeps up, not just the HTTP layer
+- **No lost events.** Kafka offsets are committed only after the ClickHouse insert, and duplicates are collapsed on the ClickHouse side. After 3 million events, the count of `200` responses, Kafka messages and ClickHouse rows matched exactly.
+- **Zero consumer lag** after a 5-minute stress run, so the write path keeps up, not just the HTTP layer
 - **One command** starts the whole stack, with a Grafana dashboard already set up
 - **End-to-end tests in CI** against the real stack in Docker
 
@@ -50,12 +50,16 @@ Targets: ingestion at 3,000 req/s or more with p99 under 150 ms; analytics at 5,
 
 | Scenario | RPS | p50 | p99 | Success |
 |---|---|---|---|---|
-| Ingestion, 1,000 rps for 60 s | 1,000 | 5.2 ms | 8.8 ms | 100% |
-| Ingestion, 5,000 rps for 5 min | 4,990 | 4.2 ms | 8.6 ms | 100% |
-| Analytics `/top-products`, 5,000 rps for 60 s | 4,981 | 0.64 ms | 1.7 ms | 99.99% |
-| Analytics `/realtime-stats`, 5,000 rps for 60 s | 4,924 | 0.46 ms | 7.8 ms | 100% |
+| Ingestion, 1,000 rps for 60 s | 998 | 4.9 ms | 9.1 ms | 100% |
+| Ingestion, 5,000 rps for 5 min | 4,990 | 4.1 ms | 8.7 ms | 100% |
+| Analytics `/top-products`, 5,000 rps for 60 s | 4,983 | 0.46 ms | 2.5 ms | 100% |
+| Analytics `/realtime-stats`, 5,000 rps for 60 s | 4,989 | 0.45 ms | 24.8 ms | 99.94% |
 
-Measured on an Apple M5 (10 cores, 24 GB), with Docker given 10 CPUs and 8 GB, and the load generator running on the same machine. `/realtime-stats` has a higher p99 than `/top-products` because its cache expires every 5 seconds, and the request that hits the expiry goes to ClickHouse. Without a rate limit, ingestion peaks at about 6,400 req/s.
+Measured on an Apple M5 (10 cores, 24 GB), with Docker given 10 CPUs and 12 GB, and the load generator running on the same machine. The runs went in the order shown, on a fresh volume, so the analytics queries ran against the 1.56 million clicks written by the ingestion runs.
+
+`/realtime-stats` is the one endpoint where the cache doesn't hide ClickHouse. Its cache expires every 5 seconds, and the request that hits the expiry counts the last 5 minutes of three raw tables with `FINAL`. That's where the 25 ms p99 and the few failed requests come from. It is still well within the target, and the first thing to change if it mattered would be a materialized view for the counters.
+
+With 50 requests in flight and no rate limit, ingestion peaks at about 5,600 req/s (p99 12.7 ms). After the stress run the workers had zero lag in Kafka, so ClickHouse kept up with the full 5,000 events/s.
 
 <details>
 <summary>Run the load tests yourself</summary>

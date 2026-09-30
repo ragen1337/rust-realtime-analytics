@@ -84,7 +84,7 @@ async fn main() {
     let run_start = Instant::now();
     for _ in 0..total {
         ticker.tick().await;
-        // ждём свободный слот: если в полёте уже `concurrency` задач — тут пауза
+        // wait for a free slot: with `concurrency` requests already in flight, pacing stalls here
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let client = client.clone();
         let url = url.clone();
@@ -99,7 +99,7 @@ async fn main() {
             let resp = req.send().await;
             let latency = start.elapsed();
 
-            drop(permit); // освобождаем слот
+            drop(permit); // free the slot
             let ok = matches!(resp, Ok(r) if r.status().is_success());
 
             (latency, ok)
