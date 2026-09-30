@@ -97,7 +97,7 @@ async fn click_event_travels_the_whole_pipeline() {
 
     wait_for_row(
         &client,
-        &format!("SELECT count() FROM events.clicks WHERE event_id = '{event_id}'"),
+        &format!("SELECT count() FROM events.clicks FINAL WHERE event_id = '{event_id}'"),
         "1",
     )
     .await;
@@ -132,7 +132,7 @@ async fn purchase_shows_up_in_analytics() {
     // wait until the workers have landed it in ClickHouse...
     wait_for_row(
         &client,
-        &format!("SELECT count() FROM events.purchases WHERE event_id = '{event_id}'"),
+        &format!("SELECT count() FROM events.purchases FINAL WHERE event_id = '{event_id}'"),
         "1",
     )
     .await;

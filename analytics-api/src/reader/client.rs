@@ -14,6 +14,12 @@ fn to_ch_datetime(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// Raw-table reads use `FINAL` so events re-delivered by the at-least-once pipeline are
+/// counted once even before a background merge has collapsed them (ReplacingMergeTree
+/// dedup is eventual). Cost: FINAL merges rows at read time; ClickHouse parallelizes it
+/// and every query here is time- or user-bounded, so it stays acceptable. The MV reads
+/// (`top_products_hourly`, `product_revenue`) cannot use it: they hold aggregate states
+/// with no event_id, so they may over-count re-delivered events.
 #[derive(Clone)]
 pub struct ChReader {
     client: Client,
@@ -51,7 +57,7 @@ impl ChReader {
         self.client
             .query(&format!(
                 "SELECT product_id, count() AS metric_value \
-                 FROM {table} \
+                 FROM {table} FINAL \
                  WHERE timestamp >= ? \
                  GROUP BY product_id \
                  ORDER BY metric_value DESC \
@@ -98,13 +104,13 @@ impl ChReader {
         self.client
             .query(
                 "SELECT 'click' AS event_type, event_id, product_id, timestamp \
-                 FROM clicks WHERE user_id = ? AND timestamp BETWEEN ? AND ? \
+                 FROM clicks FINAL WHERE user_id = ? AND timestamp BETWEEN ? AND ? \
                  UNION ALL \
                  SELECT 'view' AS event_type, event_id, product_id, timestamp \
-                 FROM views WHERE user_id = ? AND timestamp BETWEEN ? AND ? \
+                 FROM views FINAL WHERE user_id = ? AND timestamp BETWEEN ? AND ? \
                  UNION ALL \
                  SELECT 'purchase' AS event_type, event_id, product_id, timestamp \
-                 FROM purchases WHERE user_id = ? AND timestamp BETWEEN ? AND ? \
+                 FROM purchases FINAL WHERE user_id = ? AND timestamp BETWEEN ? AND ? \
                  ORDER BY timestamp DESC \
                  LIMIT ? OFFSET ?",
             )
@@ -137,8 +143,8 @@ impl ChReader {
                 "SELECT views, purchases, if(views = 0, 0, purchases / views) AS conversion_rate \
                  FROM ( \
                      SELECT \
-                         assumeNotNull((SELECT count() FROM views     WHERE timestamp BETWEEN ? AND ?)) AS views, \
-                         assumeNotNull((SELECT count() FROM purchases WHERE timestamp BETWEEN ? AND ?)) AS purchases \
+                         assumeNotNull((SELECT count() FROM views FINAL WHERE timestamp BETWEEN ? AND ?)) AS views, \
+                         assumeNotNull((SELECT count() FROM purchases FINAL WHERE timestamp BETWEEN ? AND ?)) AS purchases \
                  )",
             )
             .bind(to_ch_datetime(from)).bind(to_ch_datetime(to))
@@ -153,9 +159,9 @@ impl ChReader {
             .query(
                 // assumeNotNull: see conversion_rate — scalar subqueries are Nullable.
                 "SELECT \
-                     assumeNotNull((SELECT count() FROM clicks    WHERE timestamp >= now() - INTERVAL 5 MINUTE)) AS clicks, \
-                     assumeNotNull((SELECT count() FROM views     WHERE timestamp >= now() - INTERVAL 5 MINUTE)) AS views, \
-                     assumeNotNull((SELECT count() FROM purchases WHERE timestamp >= now() - INTERVAL 5 MINUTE)) AS purchases",
+                     assumeNotNull((SELECT count() FROM clicks FINAL WHERE timestamp >= now() - INTERVAL 5 MINUTE)) AS clicks, \
+                     assumeNotNull((SELECT count() FROM views FINAL WHERE timestamp >= now() - INTERVAL 5 MINUTE)) AS views, \
+                     assumeNotNull((SELECT count() FROM purchases FINAL WHERE timestamp >= now() - INTERVAL 5 MINUTE)) AS purchases",
             )
             .fetch_one::<RealtimeStatsRow>()
             .await

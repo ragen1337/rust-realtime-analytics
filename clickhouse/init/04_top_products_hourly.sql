@@ -10,7 +10,11 @@ CREATE TABLE IF NOT EXISTS events.top_products_hourly
 )
 ENGINE = AggregatingMergeTree()
 PARTITION BY toYYYYMM(hour)
-ORDER BY (hour, product_id);
+ORDER BY (hour, product_id)
+-- Drops a byte-identical re-inserted aggregate block (retry of the same clicks batch).
+-- This does NOT dedup events: an AggregatingMergeTree sums whatever it receives, so a
+-- re-delivered click that lands in a different batch is still counted twice here.
+SETTINGS non_replicated_deduplication_window = 1000;
 
 -- 2) MV trigger: on each insert into clicks, aggregates the new block into the target table.
 CREATE MATERIALIZED VIEW IF NOT EXISTS events.top_products_hourly_mv
