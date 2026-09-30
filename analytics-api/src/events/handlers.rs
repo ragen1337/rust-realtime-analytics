@@ -6,7 +6,8 @@ use actix_web::{HttpResponse, get, web};
 use uuid::Uuid;
 
 use super::params::{
-    ConversionQuery, Metric, ProductRevenueQuery, TopProductQuery, UserActivityQuery,
+    ConversionQuery, ProductRevenueQuery, Source, TopProductQuery, UserActivityQuery,
+    mv_lower_bound,
 };
 use crate::cache::{CacheKey, CachedResponse, ResponseCache};
 use crate::error::{AppError, AppResult};
@@ -54,10 +55,14 @@ pub async fn top_products(
         .try_get_with(key, async {
             let since = params.period.since();
             let limit = params.limit.unwrap_or(10);
-            // clicks exist in the MV -> read the fast pre-aggregate; views/purchases -> raw scan
-            let rows = match params.metric {
-                Metric::Clicks => reader.top_products_hourly(since, limit).await?,
-                _ => {
+            // 1h is an exact raw scan; clicks over 24h/7d use the hourly MV (hour-aligned edge)
+            let rows = match Source::choose(params.metric, params.period) {
+                Source::HourlyMv => {
+                    reader
+                        .top_products_hourly(mv_lower_bound(since), limit)
+                        .await?
+                }
+                Source::Raw => {
                     reader
                         .top_products_raw(params.metric.table(), since, limit)
                         .await?

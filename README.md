@@ -162,7 +162,7 @@ curl -X POST localhost:8080/api/v1/events/purchase \
 
 | Endpoint | Query params | Description |
 |---|---|---|
-| `/top-products` | `metric=clicks\|views\|purchases`, `period=1h\|24h\|7d`, `limit` | Top products by metric (clicks served from a materialized view) |
+| `/top-products` | `metric=clicks\|views\|purchases`, `period=1h\|24h\|7d`, `limit` | Top products by metric. `1h` is an exact last-60-minutes raw scan; clicks for `24h`/`7d` come from the hourly materialized view with the window rounded down to the hour, so it may include up to 1 extra hour |
 | `/user-activity/{user_id}` | `from`, `to` (RFC3339), `limit`, `offset` | A user's events across all types |
 | `/conversion-rate` | `from`, `to` | purchases / views over the range |
 | `/realtime-stats` | — | Event counters for the last 5 minutes |
@@ -195,7 +195,7 @@ ClickHouse database `events` (see `clickhouse/init/`):
 
 - **Tables** `clicks`, `views`, `purchases` — `ReplacingMergeTree`, partitioned by month, `ORDER BY (user_id, timestamp, event_id)`. Rows with an identical sort key are collapsed by background merges, so `event_id` is the dedup key; duplicates of one event share `user_id` and `timestamp`, and `user_id` stays the leading key for per-user reads.
 - **Materialized views**:
-  - `top_products_hourly` — hourly click counts per product (`AggregatingMergeTree`), backs `/top-products?metric=clicks`.
+  - `top_products_hourly` — hourly click counts per product (`AggregatingMergeTree`), backs `/top-products?metric=clicks` for `24h`/`7d` (`1h` scans raw `clicks`).
   - `product_revenue` — revenue per product/currency, backs `/product-revenue`.
   - The MVs do **not** dedup: they aggregate every inserted block and hold no `event_id`, so an event re-delivered in a different batch is counted twice in them permanently (merges do not undo it).
 - **Reading duplicates.** Dedup is *eventual*: until a background merge touches the affected parts, plain `count()` and `SELECT` on the raw tables can include duplicates. Use `FINAL` (`SELECT count() FROM events.clicks FINAL`) for exact results; it merges at read time, which costs CPU on large scans, so keep it on time- or user-bounded queries. `analytics-api` uses `FINAL` for all raw-table reads (`views`/`purchases` top products, user activity, conversion, realtime stats); it does not for the MV reads.
