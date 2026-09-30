@@ -6,6 +6,8 @@ mod writer;
 use batcher::Batcher;
 use events_contract::topics::KafkaTopic;
 use kafka::EventConsumer;
+use tokio::signal;
+use tokio_util::sync::CancellationToken;
 use writer::ChWriter;
 
 #[tokio::main]
@@ -29,9 +31,23 @@ async fn main() {
         .unwrap_or(3);
     let workers = cpus.min(partitions);
 
+    // Signal handlers are installed once here; workers only observe the token.
+    // A cancelled token stays cancelled, so a signal arriving while a worker is
+    // busy flushing is still seen on its next check.
+    let shutdown = CancellationToken::new();
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            wait_for_signal().await;
+            tracing::info!("shutdown signal received, stopping workers");
+            shutdown.cancel();
+        }
+    });
+
     let mut handles = Vec::new();
-    for _ in 0..workers {
+    for worker_id in 0..workers {
         let writer = writer.clone();
+        let shutdown = shutdown.clone();
         handles.push(tokio::spawn(async move {
             let topics = [
                 KafkaTopic::ClickEvents.as_ref(),
@@ -42,12 +58,26 @@ async fn main() {
             let consumer = EventConsumer::new("events-workers", &topics)
                 .expect("failed to create kafka consumer");
 
-            Batcher::new(writer).run(consumer).await;
+            Batcher::new(worker_id, writer)
+                .run(consumer, shutdown)
+                .await;
         }));
     }
 
     // wait for all workers to finish (otherwise main exits immediately and kills the tasks)
     for h in handles {
         let _ = h.await;
+    }
+}
+
+/// Completes on SIGTERM (docker/k8s asking us to stop) or Ctrl-C (local debugging).
+/// Unix only — prod runs in a Linux container, dev on macOS.
+async fn wait_for_signal() {
+    let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+        .expect("failed to install SIGTERM handler");
+
+    tokio::select! {
+        _ = signal::ctrl_c() => {},
+        _ = sigterm.recv() => {},
     }
 }

@@ -7,6 +7,7 @@ edition = "2024"
 events-contract = { workspace = true }
 rdkafka = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde_json = { workspace = true }
 clickhouse = { workspace = true }
 serde = { workspace = true }
