@@ -162,7 +162,7 @@ curl -X POST localhost:8080/api/v1/events/purchase \
 
 | Endpoint | Query params | Description |
 |---|---|---|
-| `/top-products` | `metric=clicks\|views\|purchases`, `period=1h\|24h\|7d`, `limit` | Top products by metric (clicks served from a materialized view) |
+| `/top-products` | `metric=clicks\|views\|purchases`, `period=1h\|24h\|7d`, `limit` | Top products by metric. `1h` is an exact last-60-minutes raw scan; clicks for `24h`/`7d` come from the hourly materialized view with the window rounded down to the hour, so it may include up to 1 extra hour |
 | `/user-activity/{user_id}` | `from`, `to` (RFC3339), `limit`, `offset` | A user's events across all types |
 | `/conversion-rate` | `from`, `to` | purchases / views over the range |
 | `/realtime-stats` | — | Event counters for the last 5 minutes |
@@ -195,7 +195,7 @@ ClickHouse database `events` (see `clickhouse/init/`):
 
 - **Tables** `clicks`, `views`, `purchases` — `MergeTree`, partitioned by month, ordered by `(user_id, timestamp)`.
 - **Materialized views**:
-  - `top_products_hourly` — hourly click counts per product (`AggregatingMergeTree`), backs `/top-products?metric=clicks`.
+  - `top_products_hourly` — hourly click counts per product (`AggregatingMergeTree`), backs `/top-products?metric=clicks` for `24h`/`7d` (`1h` scans raw `clicks`).
   - `product_revenue` — revenue per product/currency, backs `/product-revenue`.
 
 ## Local development

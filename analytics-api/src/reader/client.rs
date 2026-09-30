@@ -65,9 +65,12 @@ impl ChReader {
 
     /// Top products by clicks from the pre-aggregate (MV `top_products_hourly`).
     /// countMerge finalizes the partial states; filtering is done on hourly buckets.
+    /// `from` must be hour-aligned (see `mv_lower_bound`): the window is then
+    /// rounded DOWN to the hour, so it can include up to 1 extra hour of clicks
+    /// (never fewer). Use the raw scan when an exact window is required.
     pub async fn top_products_hourly(
         &self,
-        since: DateTime<Utc>,
+        from: DateTime<Utc>,
         limit: u64,
     ) -> clickhouse::error::Result<Vec<TopProductRow>> {
         self.client
@@ -79,7 +82,7 @@ impl ChReader {
                  ORDER BY metric_value DESC \
                  LIMIT ?",
             )
-            .bind(to_ch_datetime(since))
+            .bind(to_ch_datetime(from))
             .bind(limit)
             .fetch_all::<TopProductRow>()
             .await
