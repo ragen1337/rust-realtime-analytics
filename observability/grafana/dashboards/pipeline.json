@@ -366,8 +366,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (table) (rate(worker_insert_errors_total[1m]))",
-          "legendFormat": "errors {{table}}"
+          "expr": "sum(rate(worker_insert_errors_total[1m])) or vector(0)",
+          "legendFormat": "errors"
         },
         {
           "refId": "B",
@@ -375,8 +375,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (table) (rate(worker_insert_retries_total[1m]))",
-          "legendFormat": "retries {{table}}"
+          "expr": "sum(rate(worker_insert_retries_total[1m])) or vector(0)",
+          "legendFormat": "retries"
         }
       ],
       "fieldConfig": {
@@ -420,7 +420,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (topic) (kafka_consumergroup_lag{consumergroup=\"events-workers\"})",
+          "expr": "sum by (topic) (clamp_min(kafka_consumergroup_lag{consumergroup=\"events-workers\"}, 0))",
           "legendFormat": "{{topic}}"
         }
       ],
