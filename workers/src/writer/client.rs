@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::writer::rows::{ClickRow, PurchaseRow, ViewRow};
 use clickhouse::{Client, RowOwned, RowWrite};
@@ -46,12 +46,42 @@ impl ChWriter {
     where
         T: RowOwned + RowWrite,
     {
+        let started = Instant::now();
+        let result = self.insert_with_retries(table, batch).await;
+
+        // whole call, retries included: this is the latency the batcher actually waits
+        metrics::histogram!("worker_insert_duration_seconds", "table" => table.to_string())
+            .record(started.elapsed().as_secs_f64());
+        match &result {
+            Ok(()) => {
+                metrics::histogram!("worker_batch_rows", "table" => table.to_string())
+                    .record(batch.len() as f64);
+            }
+            // final failure, after all retries
+            Err(_) => {
+                metrics::counter!("worker_insert_errors_total", "table" => table.to_string())
+                    .increment(1);
+            }
+        }
+        result
+    }
+
+    async fn insert_with_retries<T>(
+        &self,
+        table: &str,
+        batch: &[T],
+    ) -> clickhouse::error::Result<()>
+    where
+        T: RowOwned + RowWrite,
+    {
         let mut attempt = 0;
 
         loop {
             match self.try_insert(table, batch).await {
                 Ok(()) => return Ok(()),
                 Err(e) if attempt < Self::MAX_RETRIES => {
+                    metrics::counter!("worker_insert_retries_total", "table" => table.to_string())
+                        .increment(1);
                     let delay = Duration::from_millis(100 * 2u64.pow(attempt)); // 100, 200, 400
                     tracing::warn!(table, attempt, error = %e, ?delay, "clickhouse insert failed, retrying");
                     tokio::time::sleep(delay).await;

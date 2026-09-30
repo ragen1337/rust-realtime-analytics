@@ -75,7 +75,9 @@ impl Batcher {
                 result = consumer.recv() => {
                     match result {
                         Ok(msg) => {
+                            metrics::counter!("worker_events_consumed_total", "topic" => msg.topic().to_string()).increment(1);
                             if let Err(e) = self.accept(msg.topic(), msg.payload().unwrap_or_default()) {
+                                metrics::counter!("worker_bad_payloads_total").increment(1);
                                 warn!(worker_id = self.worker_id, error = %e, "bad payload");
                             }
                         }

@@ -14,5 +14,8 @@ serde = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+metrics = { workspace = true }
+# only the workers need the built-in HTTP listener (no actix server there)
+metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

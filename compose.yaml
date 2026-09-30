@@ -149,6 +149,45 @@ services:
       PORT: ${ANALYTICS_API_CONTAINER_PORT}
     restart: unless-stopped
 
+  events-kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    container_name: events-kafka-exporter
+    depends_on:
+      events-kafka:
+        condition: service_healthy
+    # exposes kafka_consumergroup_lag, the "how far behind are the workers" signal
+    command: ["--kafka.server=events-kafka:29092"]
+    restart: unless-stopped
+
+  events-prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: events-prometheus
+    depends_on:
+      - events-kafka-exporter
+    ports:
+      - "${PROMETHEUS_HOST_PORT}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+
+  events-grafana:
+    image: grafana/grafana:11.2.0
+    container_name: events-grafana
+    depends_on:
+      - events-prometheus
+    ports:
+      - "${GRAFANA_HOST_PORT}:3000"
+    environment:
+      # Local demo stack only: anonymous read-only access, no login. Never do this
+      # on a network-reachable instance.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+
 volumes:
   clickhouse-data:
 

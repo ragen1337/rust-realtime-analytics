@@ -32,7 +32,7 @@ Product interaction events (clicks, views, purchases) are ingested over HTTP, st
 | `analytics-api` | actix-web, clickhouse, moka | Read API. Per-endpoint in-memory cache (TTL depends on period), 30s query timeout, reads materialized views where available. |
 | `events-contract` | serde | Shared event model + Kafka topic names (single source of truth for both producer and consumers). |
 
-Infrastructure: **Kafka** (KRaft, single node), **ClickHouse** (24.3), plus **Kafka UI** and **Tabix** for inspection. A one-shot `events-kafka-init` container pre-creates the topics before the workers start (a consumer subscribed to a not-yet-existing topic would otherwise wait for a metadata refresh — up to 5 minutes — before seeing it).
+Infrastructure: **Kafka** (KRaft, single node), **ClickHouse** (24.3), plus **Kafka UI** and **Tabix** for inspection and **Prometheus** + **Grafana** (+ kafka-exporter) for metrics. A one-shot `events-kafka-init` container pre-creates the topics before the workers start (a consumer subscribed to a not-yet-existing topic would otherwise wait for a metadata refresh — up to 5 minutes — before seeing it).
 
 ## Tech stack
 
@@ -97,6 +97,31 @@ To watch the pipeline live: Kafka UI (http://localhost:8081) shows topics/messag
 | Kafka UI | http://localhost:8081 |
 | ClickHouse (HTTP) | http://localhost:8123 |
 | Tabix (ClickHouse UI) | http://localhost:8083 |
+| Grafana (anonymous, dashboard is the home page) | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+
+## Observability
+
+Prometheus scrapes every 5s: `ingestion-api` and `analytics-api` at `GET /metrics` (root, next to the `/api/v1` scope), `workers` on port `9100` (`METRICS_PORT`), and a `kafka-exporter` that provides the consumer-group lag. Grafana (http://localhost:3000, anonymous viewer, demo stack only) auto-loads the **Events pipeline** dashboard; Prometheus is at http://localhost:9090.
+
+| Metric | Type | Labels | Service |
+|---|---|---|---|
+| `http_requests_total` | counter | `method`, `path` (route template), `status` | ingestion-api, analytics-api |
+| `http_request_duration_seconds` | histogram | `method`, `path` | ingestion-api, analytics-api |
+| `ingestion_kafka_errors_total` | counter | | ingestion-api |
+| `analytics_cache_lookups_total` / `analytics_cache_misses_total` | counter | `endpoint` | analytics-api |
+| `worker_events_consumed_total` | counter | `topic` | workers |
+| `worker_bad_payloads_total` | counter | | workers |
+| `worker_batch_rows` | histogram | `table` | workers |
+| `worker_insert_duration_seconds` | histogram (incl. retries) | `table` | workers |
+| `worker_insert_retries_total` / `worker_insert_errors_total` | counter | `table` | workers |
+| `kafka_consumergroup_lag` | gauge | `consumergroup`, `topic`, `partition` | kafka-exporter |
+
+Cache hit ratio is `1 - misses/lookups`, computed in Grafana.
+
+![Grafana dashboard](docs/grafana-dashboard.png)
+
+*Dashboard under the ingestion stress load test.*
 
 ## Configuration
 
@@ -108,6 +133,7 @@ All config is via environment variables (see `.env.example`). Key ones:
 | `KAFKA_NUM_PARTITIONS` | partitions per topic; caps the worker count |
 | `CLICKHOUSE_URL` | ClickHouse HTTP endpoint (`http://events-clickhouse:8123`) |
 | `CLICKHOUSE_DB` / `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | ClickHouse credentials |
+| `METRICS_PORT` | workers: Prometheus exporter port (default `9100`) |
 | `RUST_LOG` | log level, e.g. `info`, `debug`, `analytics_api=debug,info` |
 
 ## API
@@ -283,6 +309,7 @@ workers/           # Kafka consumer -> batch -> ClickHouse
 analytics-api/     # ClickHouse -> cached JSON API
 load-generator/    # dev-only HTTP load tester (standalone, outside the workspace)
 clickhouse/init/   # SQL migrations (tables + materialized views)
+observability/     # Prometheus config, Grafana provisioning + dashboard
 compose.yaml       # full stack
 .env.example       # configuration template
 ```

@@ -1,11 +1,13 @@
 use crate::config::json_config;
 use crate::kafka::producer::EventProducer;
+use actix_web::middleware::from_fn;
 use actix_web::{App, HttpServer, web};
 
 mod config;
 mod error;
 mod events;
 mod kafka;
+mod metrics;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -15,6 +17,7 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
 
+    let metrics_handle = web::Data::new(metrics::install());
     let producer = web::Data::new(EventProducer::new());
     let host = std::env::var("HOST").unwrap_or("127.0.0.1".to_string());
     let port = std::env::var("PORT").unwrap_or("8080".to_string());
@@ -27,7 +30,10 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(producer.clone())
+            .app_data(metrics_handle.clone())
             .app_data(json_config())
+            .wrap(from_fn(metrics::track))
+            .service(metrics::render)
             .service(
                 web::scope("/api/v1/events")
                     .service(events::handlers::health)

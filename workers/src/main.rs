@@ -6,9 +6,17 @@ mod writer;
 use batcher::Batcher;
 use events_contract::topics::KafkaTopic;
 use kafka::EventConsumer;
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use writer::ChWriter;
+
+/// ClickHouse inserts: a few ms for a small batch up to tens of seconds with retries.
+const INSERT_BUCKETS: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+];
+/// Batch size is capped by Batcher::BATCH_SIZE (1000); timer flushes give small ones.
+const BATCH_ROWS_BUCKETS: &[f64] = &[1.0, 5.0, 10.0, 50.0, 100.0, 250.0, 500.0, 1000.0];
 
 #[tokio::main]
 async fn main() {
@@ -17,6 +25,8 @@ async fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+
+    install_metrics();
 
     let writer = ChWriter::new();
     tracing::info!("starting workers");
@@ -80,4 +90,26 @@ async fn wait_for_signal() {
         _ = signal::ctrl_c() => {},
         _ = sigterm.recv() => {},
     }
+}
+
+/// Starts the Prometheus scrape endpoint (own listener: workers have no HTTP server).
+fn install_metrics() {
+    let port = std::env::var("METRICS_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(9100);
+
+    PrometheusBuilder::new()
+        .with_http_listener(([0, 0, 0, 0], port))
+        // explicit buckets -> real histograms (summaries can't be aggregated)
+        .set_buckets_for_metric(Matcher::Suffix("_seconds".into()), INSERT_BUCKETS)
+        .expect("valid buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("worker_batch_rows".into()),
+            BATCH_ROWS_BUCKETS,
+        )
+        .expect("valid buckets")
+        .install()
+        .expect("failed to start metrics exporter");
+    tracing::info!(port, "metrics exporter listening");
 }

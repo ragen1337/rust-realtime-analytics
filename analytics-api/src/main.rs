@@ -1,3 +1,4 @@
+use actix_web::middleware::from_fn;
 use actix_web::{App, HttpServer, web};
 
 use cache::build_cache;
@@ -8,6 +9,7 @@ mod cache;
 mod config;
 mod error;
 mod events;
+mod metrics;
 mod reader;
 
 #[actix_web::main]
@@ -24,6 +26,7 @@ async fn main() -> std::io::Result<()> {
 
     tracing::info!(%addr, "starting analytics-api");
 
+    let metrics_handle = web::Data::new(metrics::install());
     let reader = web::Data::new(ChReader::new());
     let cache = web::Data::new(build_cache());
 
@@ -33,6 +36,9 @@ async fn main() -> std::io::Result<()> {
             .app_data(path_config())
             .app_data(reader.clone())
             .app_data(cache.clone())
+            .app_data(metrics_handle.clone())
+            .wrap(from_fn(metrics::track))
+            .service(metrics::render)
             .service(
                 web::scope("/api/v1/analytics")
                     .service(events::handlers::health)

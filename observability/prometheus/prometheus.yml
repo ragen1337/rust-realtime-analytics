@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: ingestion-api
+    static_configs:
+      - targets: ["events-ingestion-api:8080"]
+
+  - job_name: analytics-api
+    static_configs:
+      - targets: ["events-analytics-api:8080"]
+
+  - job_name: workers
+    static_configs:
+      - targets: ["events-workers:9100"]
+
+  # consumer-group lag (kafka_consumergroup_lag) for the workers
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["events-kafka-exporter:9308"]
