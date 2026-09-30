@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use rdkafka::Message;
-use tokio::signal;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::error::WorkerError;
@@ -14,6 +14,8 @@ use events_contract::topics::KafkaTopic;
 /// Accumulates Kafka events into per-type batches and flushes them to ClickHouse
 /// when a threshold is reached (BATCH_SIZE) or on a timer (FLUSH_INTERVAL).
 pub struct Batcher {
+    /// Only used to tell workers apart in logs.
+    worker_id: usize,
     writer: ChWriter,
     clicks: Vec<ClickRow>,
     views: Vec<ViewRow>,
@@ -26,8 +28,9 @@ impl Batcher {
     /// Pause before re-flushing a full batch after a failure (ClickHouse is likely down).
     const RETRY_PAUSE: Duration = Duration::from_secs(1);
 
-    pub fn new(writer: ChWriter) -> Self {
+    pub fn new(worker_id: usize, writer: ChWriter) -> Self {
         Self {
+            worker_id,
             writer,
             clicks: Vec::new(),
             views: Vec::new(),
@@ -36,49 +39,66 @@ impl Batcher {
     }
 
     /// Main loop: reads from Kafka, batches, flushes on size or on a timer.
+    /// Exits on `shutdown` after one final flush.
     ///
     /// Backpressure: a full batch must land in ClickHouse before we consume more.
     /// While the flush keeps failing we stop calling `recv()`, so the backlog
     /// accumulates in the broker instead of growing this process's memory unboundedly.
-    pub async fn run(mut self, consumer: EventConsumer) {
+    pub async fn run(mut self, consumer: EventConsumer, shutdown: CancellationToken) {
         let mut ticker = interval(Self::FLUSH_INTERVAL);
 
         loop {
+            // `cancelled()` is level-triggered: a token cancelled while we were busy
+            // inside `flush()` stays cancelled, so the signal cannot be lost between
+            // `select!` calls. Checked here too so a worker stuck retrying against a
+            // dead ClickHouse still exits.
+            if shutdown.is_cancelled() {
+                break;
+            }
+
             if self.is_full() {
                 if let Err(e) = self.flush(&consumer).await {
-                    error!(error = %e, "flush failed, pausing consumption");
-                    tokio::time::sleep(Self::RETRY_PAUSE).await;
+                    error!(worker_id = self.worker_id, error = %e, "flush failed, pausing consumption");
+                    tokio::select! {
+                        _ = shutdown.cancelled() => break,
+                        _ = tokio::time::sleep(Self::RETRY_PAUSE) => {}
+                    }
                 }
                 continue;
             }
 
             tokio::select! {
+                // shutdown first: don't keep consuming while messages are flowing
+                biased;
+                _ = shutdown.cancelled() => break,
                 // a message arrived from Kafka
                 result = consumer.recv() => {
                     match result {
                         Ok(msg) => {
                             if let Err(e) = self.accept(msg.topic(), msg.payload().unwrap_or_default()) {
-                                warn!(error = %e, "bad payload");
+                                warn!(worker_id = self.worker_id, error = %e, "bad payload");
                             }
                         }
-                        Err(e) => error!(error = %e, "kafka recv error"),
+                        Err(e) => error!(worker_id = self.worker_id, error = %e, "kafka recv error"),
                     }
                 }
                 // FLUSH_INTERVAL elapsed — write whatever has accumulated
                 _ = ticker.tick() => {
                     if let Err(e) = self.flush(&consumer).await {
-                        error!(error = %e, "flush failed");
+                        error!(worker_id = self.worker_id, error = %e, "flush failed");
                     }
                 },
-                // shutdown signal received — final flush and exit
-                _ = shutdown() => {
-                    info!("shutdown: final flush");
-                    if let Err(e) = self.flush(&consumer).await {
-                        error!(error = %e, "final flush failed");
-                    }
-                    break;
-                }
             }
+        }
+
+        info!(worker_id = self.worker_id, "shutdown: final flush");
+        if let Err(e) = self.flush(&consumer).await {
+            // offsets were not committed, so Kafka re-delivers these events after restart
+            error!(
+                worker_id = self.worker_id,
+                error = %e,
+                "final flush failed, uncommitted events will be re-delivered after restart (at-least-once)"
+            );
         }
     }
 
@@ -133,18 +153,6 @@ impl Batcher {
     }
 }
 
-/// Completes on SIGTERM (docker/k8s asking us to stop) or Ctrl-C (local debugging).
-/// Unix only — prod runs in a Linux container, dev on macOS.
-async fn shutdown() {
-    let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-        .expect("failed to install SIGTERM handler");
-
-    tokio::select! {
-        _ = signal::ctrl_c() => {},
-        _ = sigterm.recv() => {},
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,7 +160,7 @@ mod tests {
     // ChWriter::new() only builds a lazy HTTP client — no network happens
     // until a flush, so constructing a Batcher in tests is safe.
     fn batcher() -> Batcher {
-        Batcher::new(ChWriter::new())
+        Batcher::new(0, ChWriter::new())
     }
 
     const CLICK_JSON: &str = r#"{
@@ -199,5 +207,19 @@ mod tests {
         assert!(!b.is_full());
         b.accept("events.clicks", CLICK_JSON.as_bytes()).unwrap();
         assert!(b.is_full());
+    }
+
+    // rdkafka connects lazily, so a consumer can be built without a broker.
+    // With the token already cancelled and empty batches, `run` must skip
+    // consuming and return right after the (no-op) final flush.
+    #[tokio::test]
+    async fn run_returns_promptly_when_already_cancelled() {
+        let consumer = EventConsumer::new("batcher-shutdown-test", &["events.clicks"]).unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        tokio::time::timeout(Duration::from_secs(5), batcher().run(consumer, token))
+            .await
+            .expect("run must exit on a cancelled token");
     }
 }
