@@ -100,7 +100,7 @@ curl "localhost:8082/api/v1/analytics/top-products?metric=clicks&period=1h&limit
 # [{"product_id":"2222…","metric_value":42}, …]
 
 curl "localhost:8082/api/v1/analytics/user-activity/11111111-1111-1111-1111-111111111111?from=2026-07-06T00:00:00Z&to=2026-07-06T23:59:59Z"
-# [{"event_type":"click","event_id":"aaaa…","product_id":"2222…","timestamp":1783346400000}, …]
+# [{"event_type":"click","event_id":"aaaa…","product_id":"2222…","timestamp":"2026-07-06T14:00:00Z"}, …]
 
 curl "localhost:8082/api/v1/analytics/conversion-rate?from=2026-07-06T00:00:00Z&to=2026-07-06T23:59:59Z"
 # {"views":1200,"purchases":48,"conversion_rate":0.04}
@@ -111,8 +111,6 @@ curl "localhost:8082/api/v1/analytics/realtime-stats"
 curl "localhost:8082/api/v1/analytics/product-revenue?limit=10"
 # [{"product_id":"2222…","currency":"USD","revenue_cents":399800}, …]
 ```
-
-In `/user-activity` responses, `timestamp` is Unix time in milliseconds, even though requests take RFC 3339.
 
 A note on `/top-products` windows. With `period=1h` the service counts raw clicks for exactly the last 60 minutes. For `24h` and `7d` it reads the hourly click totals instead, which is much cheaper, but the window starts at the top of the hour. So "last 24 hours" at 14:37 really means "since 13:00 yesterday", up to one extra hour.
 
