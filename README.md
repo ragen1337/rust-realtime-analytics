@@ -373,3 +373,24 @@ the HTTP front.
 
 Peak unthrottled throughput (no `--rps` pacing, closed-loop at concurrency 50)
 measured ~6400 RPS on the ingestion API.
+
+## Trade-offs and what's next
+
+Placed after the measurements on purpose: the numbers above hold for this design, and these are its limits.
+
+- **Duplicates are resolved eventually, not at write time.** Raw-table reads pay for `FINAL`; the MVs (`top_products_hourly`, `product_revenue`) hold no `event_id` and can over-count re-delivered events. See [Delivery semantics](#delivery-semantics).
+- **No DLQ.** A message that fails deserialization is logged, counted in `worker_bad_payloads_total` and skipped; its offset is committed with the next successful flush. Poison messages are dropped, not parked.
+- **No HA.** Kafka is a single KRaft node (replication factor 1) and ClickHouse is a single node with non-replicated engines. Fine for a demo, not for production.
+- **Sort key favours per-user reads.** `ORDER BY (user_id, timestamp, event_id)` cannot serve time-range aggregations (`realtime-stats`, `conversion`, the `1h` top-products scan): they read every part of the matching month partition(s). Fix: a skip index or projection ordered by `timestamp`, or more MVs.
+- **Cache is per instance.** moka is in-process, so replicas do not share entries and results are stale up to the TTL (5s for `realtime-stats`, 60s+ elsewhere).
+- **Freshness and precision.** Workers flush every 5s (or at 1000 rows), so ingest-to-query latency is up to ~5s plus cache TTL. `24h`/`7d` top-products read hourly buckets and may include up to one extra hour.
+- **Schema changes are manual.** `clickhouse/init/*.sql` runs only on an empty volume; there is no migration tool. Ingestion has no auth or rate limiting.
+
+**In production:**
+
+- Replicated Kafka (RF ≥ 3) and ClickHouse (`ReplicatedReplacingMergeTree`, Keeper).
+- DLQ topic for undecodable messages; schema registry or versioned event contract.
+- Migration tool for ClickHouse DDL.
+- Shared cache or cache-aside with invalidation.
+- Auth and rate limiting at the edge.
+- OpenTelemetry tracing across the pipeline; alerts on consumer lag (already on the Grafana dashboard).
