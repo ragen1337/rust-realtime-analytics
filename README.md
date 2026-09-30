@@ -274,7 +274,7 @@ Results are collected in the [Performance](#performance) section below.
 
 ## Performance
 
-Targets (from the spec): ingestion ≥ 3000 RPS, analytics ≥ 5000 RPS,
+Design targets: ingestion ≥ 3000 RPS, analytics ≥ 5000 RPS,
 ingestion p99 < 150 ms, analytics p99 < 100 ms, success rate > 99%.
 
 Measured with `load-generator` (open-loop, paced) against the full Docker

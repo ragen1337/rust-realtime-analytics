@@ -6,3 +6,8 @@ target/
 
 # OS / editor noise
 .DS_Store
+.idea/
+.vscode/
+
+# local Claude Code settings and worktrees
+.claude/
