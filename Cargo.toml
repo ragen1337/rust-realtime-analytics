@@ -20,6 +20,8 @@ actix-web = "4.14.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 clickhouse = { version = "0.15.1", features = ["uuid", "chrono", "lz4"] }
 derive_more = { version = "2.1.1", features = ["display", "error"], default-features = false }
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 moka = { version = "0.12.15", features = ["future"] }
 rdkafka = "0.39.0"
 serde = { version = "1.0.228", features = ["derive"] }

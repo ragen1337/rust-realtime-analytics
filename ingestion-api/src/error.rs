@@ -52,6 +52,7 @@ impl From<serde_json::Error> for AppError {
 impl From<rdkafka::error::KafkaError> for AppError {
     fn from(e: rdkafka::error::KafkaError) -> Self {
         tracing::error!(error = %e, "kafka send failed");
+        metrics::counter!("ingestion_kafka_errors_total").increment(1);
         AppError::ServiceUnavailable
     }
 }

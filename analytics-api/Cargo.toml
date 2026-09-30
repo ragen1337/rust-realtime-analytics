@@ -12,5 +12,7 @@ serde = { workspace = true }
 moka = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

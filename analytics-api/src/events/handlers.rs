@@ -51,8 +51,10 @@ pub async fn top_products(
     let params = query.into_inner();
     let key = params.cache_key();
 
+    crate::metrics::cache_lookup("top_products");
     let cached = cache
         .try_get_with(key, async {
+            crate::metrics::cache_miss("top_products");
             let since = params.period.since();
             let limit = params.limit.unwrap_or(10);
             // 1h is an exact raw scan; clicks over 24h/7d use the hourly MV (hour-aligned edge)
@@ -91,8 +93,10 @@ pub async fn user_activity(
     // user_id lives in Path, not in CacheKey -> mix it into the key manually
     let key = format!("user-activity|{}|{}", user_id, params.cache_key());
 
+    crate::metrics::cache_lookup("user_activity");
     let cached = cache
         .try_get_with(key, async {
+            crate::metrics::cache_miss("user_activity");
             let rows = reader
                 .user_activity(
                     user_id,
@@ -124,8 +128,10 @@ pub async fn conversion_rate(
     let params = query.into_inner();
     let key = params.cache_key();
 
+    crate::metrics::cache_lookup("conversion_rate");
     let cached = cache
         .try_get_with(key, async {
+            crate::metrics::cache_miss("conversion_rate");
             // a single summary row, not a Vec
             let row = reader.conversion_rate(params.from, params.to).await?;
 
@@ -150,8 +156,10 @@ pub async fn product_revenue(
     let params = query.into_inner();
     let key = params.cache_key();
 
+    crate::metrics::cache_lookup("product_revenue");
     let cached = cache
         .try_get_with(key, async {
+            crate::metrics::cache_miss("product_revenue");
             // read the pre-aggregate from the product_revenue MV
             let rows = reader.product_revenue(params.limit.unwrap_or(10)).await?;
 
@@ -175,8 +183,10 @@ pub async fn realtime_stats(
     // no parameters -> fixed key
     let key = "realtime-stats".to_string();
 
+    crate::metrics::cache_lookup("realtime_stats");
     let cached = cache
         .try_get_with(key, async {
+            crate::metrics::cache_miss("realtime_stats");
             let row = reader.realtime_stats().await?;
 
             let body = Bytes::from(serde_json::to_vec(&row)?);
