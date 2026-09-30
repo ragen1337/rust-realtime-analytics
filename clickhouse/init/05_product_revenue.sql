@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS events.product_revenue
     revenue_cents AggregateFunction(sum, UInt64)
 )
 ENGINE = AggregatingMergeTree()
-ORDER BY (product_id, currency);
+ORDER BY (product_id, currency)
+-- Same caveat as top_products_hourly: only a byte-identical retried block is dropped;
+-- re-delivered purchases in a different batch are summed twice.
+SETTINGS non_replicated_deduplication_window = 1000;
 
 -- 2) MV trigger: computes revenue on each insert into purchases
 CREATE MATERIALIZED VIEW IF NOT EXISTS events.product_revenue_mv

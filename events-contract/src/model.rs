@@ -6,8 +6,12 @@ use uuid::Uuid;
 /// so the JSON stays flat (no nested `context` object on the wire).
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EventContext {
-    /// Unique id for this event. Generated server-side if the client omits it;
-    /// a client-supplied value acts as an idempotency key for dedup in ClickHouse.
+    /// Unique id for this event. Generated server-side if the client omits it.
+    /// It is the dedup key of the raw ClickHouse tables (ReplacingMergeTree sorts by
+    /// `(user_id, timestamp, event_id)`), so a re-delivered or client-retried event is
+    /// collapsed there. This is NOT an idempotency key at the API: every POST is accepted,
+    /// delivery is at-least-once, and dedup is eventual (until a background merge, plain
+    /// `count()` sees duplicates; query with `FINAL`). The materialized views do not dedup.
     #[serde(default = "Uuid::new_v4")]
     pub event_id: Uuid,
     pub user_id: Uuid,
