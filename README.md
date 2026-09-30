@@ -272,6 +272,8 @@ cd load-generator
 cargo test -- --ignored
 ```
 
+CI runs this suite too, in a separate `e2e` job against the compose stack.
+
 ## Project structure
 
 ```

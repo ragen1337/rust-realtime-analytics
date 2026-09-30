@@ -56,3 +56,87 @@ jobs:
       - name: Test (load-generator)
         run: cargo test
         working-directory: load-generator
+
+  # Full-stack e2e: brings the compose stack up and runs the #[ignore]d tests
+  # in load-generator/tests/e2e.rs against it.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check # don't burn a long image build on code that doesn't pass lint/tests
+    timeout-minutes: 40
+    env:
+      # Pins the compose image names to "<project>-<service>" so they match the
+      # tags given to bake below (the default project name is the directory name).
+      COMPOSE_PROJECT_NAME: events
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds the three service images from compose.yaml (rdkafka compiles from
+      # source, ~10 min cold) with a GHA layer cache. One cache scope per image,
+      # otherwise the three builds overwrite each other's cache. `load: true`
+      # puts the images into the local docker daemon; the tags are what
+      # `docker compose up --no-build` expects.
+      - name: Build service images
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: compose.yaml
+          load: true
+          set: |
+            events-ingestion-api.tags=events-events-ingestion-api
+            events-ingestion-api.cache-from=type=gha,scope=e2e-ingestion-api
+            events-ingestion-api.cache-to=type=gha,mode=max,scope=e2e-ingestion-api
+            events-workers.tags=events-events-workers
+            events-workers.cache-from=type=gha,scope=e2e-workers
+            events-workers.cache-to=type=gha,mode=max,scope=e2e-workers
+            events-analytics-api.tags=events-events-analytics-api
+            events-analytics-api.cache-from=type=gha,scope=e2e-analytics-api
+            events-analytics-api.cache-to=type=gha,mode=max,scope=e2e-analytics-api
+
+      # Only what the e2e tests touch (dependencies such as kafka, kafka-init
+      # and clickhouse come along); the UIs are skipped.
+      - name: Start the stack
+        run: >
+          docker compose up -d --no-build
+          events-ingestion-api events-workers events-analytics-api
+
+      # events-kafka-init is a one-shot that exits 0, so no "all running" check:
+      # poll the two public health endpoints instead.
+      - name: Wait for the stack to be healthy
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS localhost:8080/api/v1/events/health >/dev/null 2>&1 \
+              && curl -fsS localhost:8082/api/v1/analytics/health >/dev/null 2>&1; then
+              echo "stack is healthy after ~$((i * 2))s"
+              docker compose ps -a
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "stack did not become healthy within 180s"
+          docker compose ps -a
+          exit 1
+
+      # load-generator depends only on events-contract and rustls-free reqwest,
+      # so no native build deps are needed here.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: load-generator -> target
+
+      - name: E2E tests
+        run: cargo test -- --ignored
+        working-directory: load-generator
+
+      - name: Compose logs
+        if: failure()
+        run: docker compose ps -a; docker compose logs --no-color --tail=500
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
