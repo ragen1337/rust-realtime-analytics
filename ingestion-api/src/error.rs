@@ -1,5 +1,6 @@
 use actix_web::{HttpResponse, error::ResponseError, http::StatusCode};
 use derive_more::derive::{Display, Error};
+use events_contract::validate::ValidationError;
 
 #[derive(Debug, Display, Error)]
 pub enum AppError {
@@ -8,6 +9,9 @@ pub enum AppError {
 
     #[display("Validation error")]
     Validation, // -> 400 (malformed JSON in the request body, see config::json_config)
+
+    #[display("invalid event: {_0}")]
+    InvalidEvent(#[error(not(source))] ValidationError), // -> 400 (parsed fine but breaks a business rule, see events_contract::validate)
 
     #[display("Internal error")]
     Internal, // -> 500 (catch-all for anything not meant for the client)
@@ -20,7 +24,7 @@ impl ResponseError for AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::NotFound => StatusCode::NOT_FOUND,
-            AppError::Validation => StatusCode::BAD_REQUEST,
+            AppError::Validation | AppError::InvalidEvent(_) => StatusCode::BAD_REQUEST,
             AppError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
         }
@@ -30,6 +34,12 @@ impl ResponseError for AppError {
         HttpResponse::build(self.status_code()).json(serde_json::json!({
             "error": self.to_string(),
         }))
+    }
+}
+
+impl From<ValidationError> for AppError {
+    fn from(e: ValidationError) -> Self {
+        AppError::InvalidEvent(e)
     }
 }
 

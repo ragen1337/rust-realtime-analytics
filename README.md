@@ -158,6 +158,23 @@ curl -X POST localhost:8080/api/v1/events/purchase \
   }'
 ```
 
+**Validation rules.** Events that parse but break a rule are rejected with `400` and never reach Kafka:
+
+- `user_id`, `product_id`, `session_id` must not be the nil UUID (`0000…`).
+- `timestamp` may be at most 5 minutes in the future (clock-skew allowance); past timestamps are accepted.
+- click: `metadata.source` and `metadata.category` must be non-blank and at most 64 characters.
+- view: `referrer`, if present, must be at most 2048 characters.
+- purchase: `quantity` must be >= 1; `currency` must be exactly 3 uppercase ASCII letters (ISO 4217 shape, the code list itself is not checked). `unit_price_cents` may be 0 (free items/promos).
+
+The first violated rule is reported, and the body names the field:
+
+```bash
+# same purchase as above, but with "quantity": 0
+# -> 400 {"error":"invalid event: quantity: must be >= 1"}
+```
+
+Malformed JSON (missing field, wrong type) is also `400`, with `{"error":"Validation error"}`.
+
 ### Analytics — `GET /api/v1/analytics/...`
 
 | Endpoint | Query params | Description |

@@ -190,3 +190,33 @@ async fn analytics_endpoints_respond() {
         .unwrap();
     assert_eq!(resp.status(), 400, "garbage params must be rejected as 400");
 }
+
+/// Business-rule violations are rejected at the edge with a readable 400
+/// instead of being pushed to Kafka.
+#[tokio::test]
+#[ignore = "requires the docker compose stack"]
+async fn invalid_purchase_is_rejected_with_400() {
+    let client = reqwest::Client::new();
+
+    let event = PurchaseEvent {
+        context: context(),
+        order_id: Uuid::new_v4(),
+        quantity: 0,
+        unit_price_cents: 4999,
+        currency: "USD".to_string(),
+        payment_method: PaymentMethod::Card,
+    };
+
+    let resp = client
+        .post(format!("{}/api/v1/events/purchase", ingestion_url()))
+        .json(&event)
+        .send()
+        .await
+        .expect("ingestion-api must be reachable");
+    assert_eq!(resp.status(), 400);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("quantity"),
+        "error must name the field: {body}"
+    );
+}

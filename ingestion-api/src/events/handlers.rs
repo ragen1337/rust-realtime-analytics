@@ -3,6 +3,7 @@ use crate::kafka::producer::EventProducer;
 use actix_web::{HttpResponse, get, post, web};
 use events_contract::model::{ClickEvent, PurchaseEvent, ViewEvent};
 use events_contract::topics::KafkaTopic;
+use events_contract::validate::Validate;
 use serde_json::json;
 
 #[get("/health")]
@@ -22,6 +23,7 @@ pub async fn click(
     producer: web::Data<EventProducer>,
 ) -> AppResult<HttpResponse> {
     let event = info.into_inner();
+    event.validate()?;
 
     let payload = serde_json::to_string(&event)?;
 
@@ -42,6 +44,7 @@ pub async fn view(
     producer: web::Data<EventProducer>,
 ) -> AppResult<HttpResponse> {
     let event = info.into_inner();
+    event.validate()?;
 
     let payload = serde_json::to_string(&event)?;
 
@@ -62,6 +65,7 @@ pub async fn purchase(
     producer: web::Data<EventProducer>,
 ) -> AppResult<HttpResponse> {
     let event = info.into_inner();
+    event.validate()?;
 
     let payload = serde_json::to_string(&event)?;
 
