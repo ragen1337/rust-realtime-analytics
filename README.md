@@ -121,7 +121,7 @@ Cache hit ratio is `1 - misses/lookups`, computed in Grafana.
 
 ![Grafana dashboard](docs/grafana-dashboard.png)
 
-*Dashboard under the ingestion stress load test.*
+*Under load: ingestion peaking at ~8k req/s (5k stress run overlapping a 3k run), ~1.5k req/s of cached analytics reads.*
 
 ## Configuration
 
